@@ -28,6 +28,7 @@
 #include <stdbool.h>
 #include <stdarg.h>
 #include <inttypes.h>
+#include <time.h>
 #include <unistd.h>
 #include "bspwm.h"
 #include "desktop.h"
@@ -102,6 +103,8 @@ void process_message(char **args, int num, FILE *rsp)
 		cmd_rule(++args, --num, rsp);
 	} else if (streq("config", *args)) {
 		cmd_config(++args, --num, rsp);
+	} else if (streq("scratchpad", *args)) {
+		cmd_scratchpad(++args, --num, rsp);
 	} else if (streq("quit", *args)) {
 		cmd_quit(++args, --num, rsp);
 	} else {
@@ -350,6 +353,9 @@ void cmd_node(char **args, int num, FILE *rsp)
 				set_private(trg.monitor, trg.desktop, trg.node, (a == ALTER_SET ? b : !trg.node->private));
 			} else if (streq("locked", key)) {
 				set_locked(trg.monitor, trg.desktop, trg.node, (a == ALTER_SET ? b : !trg.node->locked));
+			} else if (streq("scratch", key)) {
+				set_scratch(trg.monitor, trg.desktop, trg.node, (a == ALTER_SET ? b : !trg.node->scratch));
+				changed = true;
 			} else if (streq("marked", key)) {
 				set_marked(trg.monitor, trg.desktop, trg.node, (a == ALTER_SET ? b : !trg.node->marked));
 			} else {
@@ -1401,6 +1407,203 @@ void cmd_quit(char **args, int num, FILE *rsp)
 	running = false;
 }
 
+static void scratchpad_unhide_focus(coordinates_t *loc)
+{
+	focus_node(loc->monitor, loc->desktop, loc->node);
+	struct timespec delay = {.tv_sec = 0, .tv_nsec = 120000000L};
+	nanosleep(&delay, NULL);
+	focus_node(loc->monitor, loc->desktop, loc->node);
+}
+
+void cmd_scratchpad(char **args, int num, FILE *rsp)
+{
+	if (num < 1) {
+		fail(rsp, "scratchpad: Missing arguments.\n");
+		return;
+	}
+
+	if (streq("list-profiles", args[0])) {
+		scratchpad_profile_list(rsp);
+		return;
+	} else if (streq("toggle", args[0])) {
+		coordinates_t loc;
+		char profbuf[SCRATCHPAD_PROFILE_NAME_LEN];
+		const char *profile = NULL;
+		if (num >= 2 && args[1][0] != '\0' &&
+		    scratchpad_profile_normalize_arg(args[1], profbuf, sizeof(profbuf))) {
+			profile = profbuf;
+		}
+
+		if (profile == NULL) {
+			if (mon != NULL && mon->desk != NULL && mon->desk->focus != NULL) {
+				node_t *fn = mon->desk->focus;
+				if (fn->client != NULL && fn->scratch && !fn->hidden) {
+					set_hidden(mon, mon->desk, fn, true);
+					return;
+				}
+			}
+		}
+
+		const char *find_profile = profile;
+		if (profile == NULL && scratchpad_default[0] != '\0') {
+			find_profile = scratchpad_default;
+		}
+
+		if (find_scratch_for_profile(&loc, find_profile)) {
+			bool was_hidden = loc.node->hidden;
+			if (was_hidden) {
+				scratchpad_hide_all_except(loc.node);
+			}
+			set_hidden(loc.monitor, loc.desktop, loc.node, !was_hidden);
+			if (!loc.node->hidden) {
+				scratchpad_unhide_focus(&loc);
+			}
+			return;
+		}
+
+		const char *spawn = scratchpad_profile_get_spawn(profile);
+		if (spawn == NULL) {
+			if (profile != NULL) {
+				fail(rsp, "scratchpad toggle: No matching scratch window and no spawn for profile '%s'.\n", profile);
+			} else {
+				fail(rsp, "scratchpad toggle: No scratch window and scratchpad_spawn_command is unset.\n");
+			}
+			return;
+		}
+		pid_t pid = fork();
+		if (pid == -1) {
+			fail(rsp, "scratchpad toggle: fork failed.\n");
+			return;
+		}
+		if (pid == 0) {
+			setsid();
+			execl("/bin/sh", "sh", "-c", spawn, (char *) NULL);
+			_exit(1);
+		}
+		return;
+	} else if (streq("hide", args[0])) {
+		char profbuf[SCRATCHPAD_PROFILE_NAME_LEN];
+		const char *profile = NULL;
+		if (num >= 2 && args[1][0] != '\0' &&
+		    scratchpad_profile_normalize_arg(args[1], profbuf, sizeof(profbuf))) {
+			profile = profbuf;
+		}
+		for (monitor_t *m = mon_head; m != NULL; m = m->next) {
+			for (desktop_t *d = m->desk_head; d != NULL; d = d->next) {
+				for (node_t *n = first_extrema(d->root); n != NULL; n = next_leaf(n, d->root)) {
+					if (n->client == NULL || !n->scratch || n->hidden) {
+						continue;
+					}
+					if (profile != NULL && !node_scratch_matches_profile(n, profile)) {
+						continue;
+					}
+					set_hidden(m, d, n, true);
+				}
+			}
+		}
+		return;
+	} else if (streq("hide_focused", args[0])) {
+		if (mon != NULL && mon->desk != NULL && mon->desk->focus != NULL) {
+			node_t *n = mon->desk->focus;
+			if (n->client != NULL && n->scratch && !n->hidden) {
+				set_hidden(mon, mon->desk, n, true);
+			}
+		}
+		return;
+	} else if (streq("close", args[0])) {
+#define MAX_SCRATCH_CLOSE 64
+		char profbuf[SCRATCHPAD_PROFILE_NAME_LEN];
+		const char *profile = NULL;
+		if (num >= 2 && args[1][0] != '\0' &&
+		    scratchpad_profile_normalize_arg(args[1], profbuf, sizeof(profbuf))) {
+			profile = profbuf;
+		}
+		if (profile != NULL) {
+			node_t *nodes[MAX_SCRATCH_CLOSE];
+			int nn = 0;
+			for (monitor_t *m = mon_head; m != NULL; m = m->next) {
+				for (desktop_t *d = m->desk_head; d != NULL; d = d->next) {
+					for (node_t *n = first_extrema(d->root); n != NULL; n = next_leaf(n, d->root)) {
+						if (n->client == NULL || !n->scratch) {
+							continue;
+						}
+						if (!node_scratch_matches_profile(n, profile)) {
+							continue;
+						}
+						if (nn < MAX_SCRATCH_CLOSE) {
+							nodes[nn++] = n;
+						}
+					}
+				}
+			}
+			for (int i = 0; i < nn; i++) {
+				close_node(nodes[i]);
+			}
+#undef MAX_SCRATCH_CLOSE
+			return;
+		}
+		if (mon != NULL && mon->desk != NULL && mon->desk->focus != NULL) {
+			node_t *fn = mon->desk->focus;
+			if (fn->client != NULL && fn->scratch) {
+				close_node(fn);
+				return;
+			}
+		}
+		fail(rsp, "scratchpad close: focused window is not a scratch window.\n");
+		return;
+	} else if (streq("cycle", args[0])) {
+#define MAX_SCRATCH_CYCLE 64
+		coordinates_t refs[MAX_SCRATCH_CYCLE];
+		int nrefs = 0;
+		for (monitor_t *m = mon_head; m != NULL; m = m->next) {
+			for (desktop_t *d = m->desk_head; d != NULL; d = d->next) {
+				for (node_t *nd = first_extrema(d->root); nd != NULL; nd = next_leaf(nd, d->root)) {
+					if (nd->client == NULL || !nd->scratch) {
+						continue;
+					}
+					if (nrefs >= MAX_SCRATCH_CYCLE) {
+						goto scratch_cycle_done;
+					}
+					refs[nrefs].monitor = m;
+					refs[nrefs].desktop = d;
+					refs[nrefs].node = nd;
+					nrefs++;
+				}
+			}
+		}
+scratch_cycle_done:
+#undef MAX_SCRATCH_CYCLE
+		if (nrefs == 0) {
+			return;
+		}
+		node_t *foc = (mon != NULL && mon->desk != NULL) ? mon->desk->focus : NULL;
+		int cur = -1;
+		for (int i = 0; i < nrefs; i++) {
+			if (foc != NULL && refs[i].node == foc) {
+				cur = i;
+				break;
+			}
+		}
+		if (cur == -1) {
+			for (int i = 0; i < nrefs; i++) {
+				if (!refs[i].node->hidden) {
+					cur = i;
+					break;
+				}
+			}
+		}
+		int next = (cur + 1) % nrefs;
+		scratchpad_hide_all_except(refs[next].node);
+		if (refs[next].node->hidden) {
+			set_hidden(refs[next].monitor, refs[next].desktop, refs[next].node, false);
+		}
+		scratchpad_unhide_focus(&refs[next]);
+		return;
+	} else {
+		fail(rsp, "scratchpad: Unknown command: '%s'.\n", args[0]);
+	}
+}
+
 void cmd_config(char **args, int num, FILE *rsp)
 {
 	if (num < 1) {
@@ -1458,6 +1661,19 @@ void cmd_config(char **args, int num, FILE *rsp)
 	} else {
 		fail(rsp, "config: Was expecting 1 or 2 arguments, received %i.\n", num);
 	}
+}
+
+/* After the literal prefix "scratchpad_profile_" (18 bytes), skip extra '_' (common typo: scratchpad_profile__ffscratch). */
+static const char *scratchpad_profile_name_from_config_key(const char *key)
+{
+	if (strncmp(key, "scratchpad_profile_", 18) != 0) {
+		return NULL;
+	}
+	const char *p = key + 18;
+	while (*p == '_') {
+		p++;
+	}
+	return (*p != '\0') ? p : NULL;
 }
 
 void set_setting(coordinates_t loc, char *name, char *value, FILE *rsp)
@@ -1638,8 +1854,27 @@ void set_setting(coordinates_t loc, char *name, char *value, FILE *rsp)
 			return; \
 		}
 	SET_STR(external_rules_command)
+	SET_STR(scratchpad_spawn_command)
 	SET_STR(status_prefix)
 #undef SET_STR
+	} else if (streq("scratchpad_default", name)) {
+		if (value[0] != '\0' && !scratchpad_profile_name_valid(value)) {
+			fail(rsp, "config: invalid scratchpad_default name.\n");
+			return;
+		}
+		snprintf(scratchpad_default, sizeof(scratchpad_default), "%s", value);
+		return;
+	} else if (strncmp(name, "scratchpad_profile_", 18) == 0) {
+		const char *pname = scratchpad_profile_name_from_config_key(name);
+		if (pname == NULL || !scratchpad_profile_name_valid(pname)) {
+			fail(rsp, "config: invalid scratchpad profile name in '%s'.\n", name);
+			return;
+		}
+		if (!scratchpad_profile_set(pname, value)) {
+			fail(rsp, "config: too many scratchpad profiles.\n");
+			return;
+		}
+		return;
 	} else if (streq("split_ratio", name)) {
 		double r;
 		if (sscanf(value, "%lf", &r) == 1 && r > 0 && r < 1) {
@@ -1795,6 +2030,7 @@ void set_setting(coordinates_t loc, char *name, char *value, FILE *rsp)
 		SET_BOOL(ignore_ewmh_struts)
 		SET_BOOL(center_pseudo_tiled)
 		SET_BOOL(removal_adjustment)
+		SET_BOOL(scratch_autohide)
 #undef SET_BOOL
 #define SET_MON_BOOL(s) \
 	} else if (streq(#s, name)) { \
@@ -1809,6 +2045,38 @@ void set_setting(coordinates_t loc, char *name, char *value, FILE *rsp)
 		SET_MON_BOOL(remove_unplugged_monitors)
 		SET_MON_BOOL(merge_overlapping_monitors)
 #undef SET_MON_BOOL
+	} else if (streq("scratch_width_ratio", name)) {
+		double r;
+		if (sscanf(value, "%lf", &r) == 1 && r > 0 && r <= 1.0) {
+			scratch_width_ratio = r;
+		} else {
+			fail(rsp, "config: %s: Invalid value: '%s'.\n", name, value);
+			return;
+		}
+	} else if (streq("scratch_height_ratio", name)) {
+		double r;
+		if (sscanf(value, "%lf", &r) == 1 && r > 0 && r <= 1.0) {
+			scratch_height_ratio = r;
+		} else {
+			fail(rsp, "config: %s: Invalid value: '%s'.\n", name, value);
+			return;
+		}
+	} else if (streq("scratch_autohide_blur_delay_ms", name)) {
+		unsigned int v;
+		if (sscanf(value, "%u", &v) != 1 || v > 10000) {
+			fail(rsp, "config: %s: Invalid value: '%s'.\n", name, value);
+			return;
+		}
+		scratch_autohide_blur_delay_ms = v;
+		return;
+	} else if (streq("scratch_autohide_desktop_delay_ms", name)) {
+		unsigned int v;
+		if (sscanf(value, "%u", &v) != 1 || v > 10000) {
+			fail(rsp, "config: %s: Invalid value: '%s'.\n", name, value);
+			return;
+		}
+		scratch_autohide_desktop_delay_ms = v;
+		return;
 	} else {
 		fail(rsp, "config: Unknown setting: '%s'.\n", name);
 		return;
@@ -1828,6 +2096,14 @@ void get_setting(coordinates_t loc, char *name, FILE* rsp)
 {
 	if (streq("split_ratio", name)) {
 		fprintf(rsp, "%lf", split_ratio);
+	} else if (streq("scratch_width_ratio", name)) {
+		fprintf(rsp, "%lf", scratch_width_ratio);
+	} else if (streq("scratch_height_ratio", name)) {
+		fprintf(rsp, "%lf", scratch_height_ratio);
+	} else if (streq("scratch_autohide_blur_delay_ms", name)) {
+		fprintf(rsp, "%u", scratch_autohide_blur_delay_ms);
+	} else if (streq("scratch_autohide_desktop_delay_ms", name)) {
+		fprintf(rsp, "%u", scratch_autohide_desktop_delay_ms);
 	} else if (streq("border_width", name)) {
 		if (loc.node != NULL) {
 			for (node_t *n = first_extrema(loc.node); n != NULL; n = next_leaf(n, loc.node)) {
@@ -1878,6 +2154,17 @@ void get_setting(coordinates_t loc, char *name, FILE* rsp)
 		fprintf(rsp, "%i", monocle_padding.left);
 	} else if (streq("external_rules_command", name)) {
 		fprintf(rsp, "%s", external_rules_command);
+	} else if (streq("scratchpad_spawn_command", name)) {
+		fprintf(rsp, "%s", scratchpad_spawn_command);
+	} else if (streq("scratchpad_default", name)) {
+		fprintf(rsp, "%s", scratchpad_default);
+	} else if (strncmp(name, "scratchpad_profile_", 18) == 0) {
+		const char *pname = scratchpad_profile_name_from_config_key(name);
+		if (pname == NULL || !scratchpad_profile_name_valid(pname)) {
+			fail(rsp, "config: unknown setting: '%s'.\n", name);
+			return;
+		}
+		scratchpad_profile_print(pname, rsp);
 	} else if (streq("status_prefix", name)) {
 		fprintf(rsp, "%s", status_prefix);
 	} else if (streq("initial_polarity", name)) {
@@ -1930,6 +2217,7 @@ void get_setting(coordinates_t loc, char *name, FILE* rsp)
 	GET_BOOL(remove_disabled_monitors)
 	GET_BOOL(remove_unplugged_monitors)
 	GET_BOOL(merge_overlapping_monitors)
+	GET_BOOL(scratch_autohide)
 #undef GET_BOOL
 	} else {
 		fail(rsp, "config: Unknown setting: '%s'.\n", name);

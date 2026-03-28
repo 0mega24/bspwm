@@ -339,7 +339,9 @@ void client_message(xcb_generic_event_t *evt)
 			transfer_node(loc.monitor, loc.desktop, loc.node, dloc.monitor, dloc.desktop, dloc.desktop->focus, false);
 		}
 	} else if (e->type == ewmh->_NET_CLOSE_WINDOW) {
-		close_node(loc.node);
+		if (!loc.node->scratch) {
+			close_node(loc.node);
+		}
 	}
 }
 

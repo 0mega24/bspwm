@@ -52,6 +52,7 @@
 #include "restore.h"
 #include "query.h"
 #include "bspwm.h"
+#include "autohide.h"
 
 xcb_connection_t *dpy;
 int default_screen, screen_width, screen_height;
@@ -225,7 +226,11 @@ int main(int argc, char *argv[])
 			}
 		}
 
-		if (select(max_fd + 1, &descriptors, NULL, NULL, NULL) > 0) {
+		struct timeval autohide_tv, *autohide_tvp = NULL;
+		autohide_prepare_select(&autohide_tvp, &autohide_tv);
+		int sel_r = select(max_fd + 1, &descriptors, NULL, NULL, autohide_tvp);
+		autohide_pump();
+		if (sel_r > 0) {
 
 			pending_rule_t *pr = pending_rule_head;
 			while (pr != NULL) {

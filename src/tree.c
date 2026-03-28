@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
 #include <limits.h>
 #include "bspwm.h"
 #include "desktop.h"
@@ -121,14 +122,26 @@ void apply_layout(monitor_t *m, desktop_t *d, node_t *n, xcb_rectangle_t rect, x
 			n->client->tiled_rectangle = r;
 		/* floating clients */
 		} else if (s == STATE_FLOATING) {
-			r = n->client->floating_rectangle;
+			if (n->scratch) {
+				/* Use root_rect (full desktop tileable area), not this leaf's rect, so size
+				 * and centering match scratch_*_ratio docs regardless of tree position. */
+				r.width = MAX(1, (uint16_t) (root_rect.width * scratch_width_ratio));
+				r.height = MAX(1, (uint16_t) (root_rect.height * scratch_height_ratio));
+				r.x = root_rect.x + (int16_t) ((root_rect.width - r.width) / 2);
+				r.y = root_rect.y + (int16_t) ((root_rect.height - r.height) / 2);
+				n->client->floating_rectangle = r;
+			} else {
+				r = n->client->floating_rectangle;
+			}
 		/* fullscreen clients */
 		} else {
 			r = m->rectangle;
 			n->client->tiled_rectangle = r;
 		}
 
-		apply_size_hints(n->client, &r.width, &r.height);
+		if (!(s == STATE_FLOATING && n->scratch)) {
+			apply_size_hints(n->client, &r.width, &r.height);
+		}
 
 		if (!rect_eq(r, cr)) {
 			window_move_resize(n->id, r.x, r.y, r.width, r.height);
@@ -270,6 +283,9 @@ node_t *find_public(desktop_t *d)
 		if (n->vacant) {
 			continue;
 		}
+		if (n->scratch) {
+			continue;
+		}
 		unsigned int n_area = node_area(d, n);
 		if (n_area > b_manual_area && (n->presel != NULL || !n->private)) {
 			b_manual = n;
@@ -285,6 +301,70 @@ node_t *find_public(desktop_t *d)
 		return b_automatic;
 	} else {
 		return b_manual;
+	}
+}
+
+bool find_first_scratch(coordinates_t *loc)
+{
+	for (monitor_t *m = mon_head; m != NULL; m = m->next) {
+		for (desktop_t *d = m->desk_head; d != NULL; d = d->next) {
+			for (node_t *n = first_extrema(d->root); n != NULL; n = next_leaf(n, d->root)) {
+				if (n->client != NULL && n->scratch) {
+					loc->monitor = m;
+					loc->desktop = d;
+					loc->node = n;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+bool node_scratch_matches_profile(node_t *n, const char *profile)
+{
+	if (n == NULL || n->client == NULL || !n->scratch || profile == NULL || profile[0] == '\0') {
+		return false;
+	}
+	return streq(n->client->instance_name, profile) || streq(n->client->class_name, profile);
+}
+
+bool find_scratch_for_profile(coordinates_t *loc, const char *profile)
+{
+	if (profile == NULL || profile[0] == '\0') {
+		return find_first_scratch(loc);
+	}
+	for (monitor_t *m = mon_head; m != NULL; m = m->next) {
+		for (desktop_t *d = m->desk_head; d != NULL; d = d->next) {
+			for (node_t *n = first_extrema(d->root); n != NULL; n = next_leaf(n, d->root)) {
+				if (n->client != NULL && n->scratch && node_scratch_matches_profile(n, profile)) {
+					loc->monitor = m;
+					loc->desktop = d;
+					loc->node = n;
+					return true;
+				}
+			}
+		}
+	}
+	return false;
+}
+
+void scratchpad_hide_all_except(node_t *except)
+{
+	if (except == NULL) {
+		return;
+	}
+	for (monitor_t *m = mon_head; m != NULL; m = m->next) {
+		for (desktop_t *d = m->desk_head; d != NULL; d = d->next) {
+			for (node_t *n = first_extrema(d->root); n != NULL; n = next_leaf(n, d->root)) {
+				if (n->client == NULL || !n->scratch || n == except) {
+					continue;
+				}
+				if (!n->hidden) {
+					set_hidden(m, d, n, true);
+				}
+			}
+		}
 	}
 }
 
@@ -325,7 +405,7 @@ node_t *insert_node(monitor_t *m, desktop_t *d, node_t *n, node_t *f)
 	} else {
 		node_t *c = make_node(XCB_NONE);
 		node_t *p = f->parent;
-		if (f->presel == NULL && (f->private || private_count(f->parent) > 0)) {
+		if (f->presel == NULL && (f->private || f->scratch || private_count(f->parent) > 0)) {
 			node_t *k = find_public(d);
 			if (k != NULL) {
 				f = k;
@@ -633,6 +713,7 @@ bool focus_node(monitor_t *m, desktop_t *d, node_t *n)
 	bool has_input_focus = false;
 
 	if (mon != m) {
+		transfer_scratchpads_to_monitor(m, d);
 		mon = m;
 
 		if (pointer_follows_monitor) {
@@ -734,7 +815,7 @@ node_t *make_node(uint32_t id)
 	node_t *n = calloc(1, sizeof(node_t));
 	n->id = id;
 	n->parent = n->first_child = n->second_child = NULL;
-	n->vacant = n->hidden = n->sticky = n->private = n->locked = n->marked = false;
+	n->vacant = n->hidden = n->sticky = n->private = n->locked = n->scratch = n->marked = false;
 	n->split_ratio = split_ratio;
 	n->split_type = TYPE_VERTICAL;
 	n->constraints = (constraints_t) {MIN_WIDTH, MIN_HEIGHT};
@@ -2154,6 +2235,10 @@ void set_sticky(monitor_t *m, desktop_t *d, node_t *n, bool value)
 		return;
 	}
 
+	if (!value && n->scratch) {
+		return;
+	}
+
 	if (d != m->desk) {
 		transfer_node(m, d, n, m, m->desk, m->desk->focus, false);
 	}
@@ -2210,6 +2295,64 @@ void set_locked(monitor_t *m, desktop_t *d, node_t *n, bool value)
 	if (n == m->desk->focus) {
 		put_status(SBSC_MASK_REPORT);
 	}
+}
+
+void set_scratch(monitor_t *m, desktop_t *d, node_t *n, bool value)
+{
+	if (n == NULL || n->scratch == value) {
+		return;
+	}
+
+	n->scratch = value;
+
+	if (value) {
+		set_sticky(m, d, n, true);
+	}
+
+	put_status(SBSC_MASK_NODE_FLAG, "node_flag 0x%08X 0x%08X 0x%08X scratch %s\n", m->id, d->id, n->id, ON_OFF_STR(value));
+
+	if (n == m->desk->focus) {
+		put_status(SBSC_MASK_REPORT);
+	}
+
+	arrange(m, d);
+}
+
+void transfer_scratchpads_to_monitor(monitor_t *md, desktop_t *dd)
+{
+	if (md == NULL || dd == NULL) {
+		return;
+	}
+
+#define MAX_SCRATCH_PADS 64
+	coordinates_t refs[MAX_SCRATCH_PADS];
+	int nrefs = 0;
+
+	for (monitor_t *m = mon_head; m != NULL; m = m->next) {
+		for (desktop_t *d = m->desk_head; d != NULL; d = d->next) {
+			for (node_t *n = first_extrema(d->root); n != NULL; n = next_leaf(n, d->root)) {
+				if (n->client != NULL && n->scratch) {
+					if (nrefs >= MAX_SCRATCH_PADS) {
+						goto done_collect;
+					}
+					refs[nrefs].monitor = m;
+					refs[nrefs].desktop = d;
+					refs[nrefs].node = n;
+					nrefs++;
+				}
+			}
+		}
+	}
+done_collect:
+
+	for (int i = 0; i < nrefs; i++) {
+		if (refs[i].monitor == md && refs[i].desktop == dd) {
+			continue;
+		}
+		transfer_node(refs[i].monitor, refs[i].desktop, refs[i].node,
+		              md, dd, dd->focus, false);
+	}
+#undef MAX_SCRATCH_PADS
 }
 
 void set_marked(monitor_t *m, desktop_t *d, node_t *n, bool value)

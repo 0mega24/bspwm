@@ -127,6 +127,7 @@ void query_node(node_t *n, FILE *rsp)
 		fprintf(rsp, "\"sticky\":%s,", BOOL_STR(n->sticky));
 		fprintf(rsp, "\"private\":%s,", BOOL_STR(n->private));
 		fprintf(rsp, "\"locked\":%s,", BOOL_STR(n->locked));
+		fprintf(rsp, "\"scratch\":%s,", BOOL_STR(n->scratch));
 		fprintf(rsp, "\"marked\":%s,", BOOL_STR(n->marked));
 		fprintf(rsp, "\"presel\":");
 		query_presel(n->presel, rsp);
@@ -455,14 +456,14 @@ void print_rule_consequence(char **buf, rule_consequence_t *csq)
 		*rect_buf = '\0';
 	}
 
-	asprintf(buf, "monitor=%s desktop=%s node=%s state=%s layer=%s honor_size_hints=%s split_dir=%s split_ratio=%lf hidden=%s sticky=%s private=%s locked=%s marked=%s center=%s follow=%s manage=%s focus=%s border=%s rectangle=%s",
+	asprintf(buf, "monitor=%s desktop=%s node=%s state=%s layer=%s honor_size_hints=%s split_dir=%s split_ratio=%lf hidden=%s sticky=%s private=%s locked=%s scratch=%s marked=%s center=%s follow=%s manage=%s focus=%s border=%s rectangle=%s",
 	        csq->monitor_desc, csq->desktop_desc, csq->node_desc,
 	        csq->state == NULL ? "" : STATE_STR(*csq->state),
 	        csq->layer == NULL ? "" : LAYER_STR(*csq->layer),
 	        csq->honor_size_hints == HONOR_SIZE_HINTS_DEFAULT ? "" : HSH_MODE_STR(csq->honor_size_hints),
 	        csq->split_dir == NULL ? "" : SPLIT_DIR_STR(*csq->split_dir), csq->split_ratio,
 	        ON_OFF_STR(csq->hidden), ON_OFF_STR(csq->sticky), ON_OFF_STR(csq->private),
-	        ON_OFF_STR(csq->locked), ON_OFF_STR(csq->marked), ON_OFF_STR(csq->center), ON_OFF_STR(csq->follow),
+	        ON_OFF_STR(csq->locked), ON_OFF_STR(csq->scratch), ON_OFF_STR(csq->marked), ON_OFF_STR(csq->center), ON_OFF_STR(csq->follow),
 	        ON_OFF_STR(csq->manage), ON_OFF_STR(csq->focus), ON_OFF_STR(csq->border), rect_buf);
 	free(rect_buf);
 }
@@ -491,6 +492,7 @@ node_select_t make_node_select(void)
 		.sticky = OPTION_NONE,
 		.private = OPTION_NONE,
 		.locked = OPTION_NONE,
+		.scratch = OPTION_NONE,
 		.marked = OPTION_NONE,
 		.urgent = OPTION_NONE,
 		.same_class = OPTION_NONE,
@@ -1133,6 +1135,7 @@ bool node_matches(coordinates_t *loc, coordinates_t *ref, node_select_t *sel)
 	NFLAG(sticky)
 	NFLAG(private)
 	NFLAG(locked)
+	NFLAG(scratch)
 	NFLAG(marked)
 #undef NFLAG
 
@@ -1170,7 +1173,8 @@ bool node_matches(coordinates_t *loc, coordinates_t *ref, node_select_t *sel)
 		    sel->below == OPTION_TRUE ||
 		    sel->normal == OPTION_TRUE ||
 		    sel->above == OPTION_TRUE ||
-		    sel->urgent == OPTION_TRUE) {
+		    sel->urgent == OPTION_TRUE ||
+		    sel->scratch == OPTION_TRUE) {
 			return false;
 		}
 		return true;

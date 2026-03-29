@@ -25,7 +25,10 @@
 #ifndef BSPWM_SETTINGS_H
 #define BSPWM_SETTINGS_H
 
+#include <stdio.h>
 #include "types.h"
+
+#define SCRATCHPAD_PROFILE_NAME_LEN   32
 
 #define POINTER_MODIFIER         XCB_MOD_MASK_4
 #define POINTER_MOTION_INTERVAL  17
@@ -42,6 +45,8 @@
 #define WINDOW_GAP           6
 #define BORDER_WIDTH         1
 #define SPLIT_RATIO          0.5
+#define SCRATCH_WIDTH_RATIO  0.5
+#define SCRATCH_HEIGHT_RATIO 0.5
 #define AUTOMATIC_SCHEME     SCHEME_LONGEST_SIDE
 #define REMOVAL_ADJUSTMENT   true
 
@@ -69,6 +74,9 @@
 #define MERGE_OVERLAPPING_MONITORS  false
 
 extern char external_rules_command[MAXLEN];
+extern char scratchpad_spawn_command[MAXLEN];
+/** If non-empty, scratchpad toggle with no profile argument matches only this profile name for find (spawn still uses scratchpad_spawn_command). Empty = first scratch window of any kind (legacy). */
+extern char scratchpad_default[SCRATCHPAD_PROFILE_NAME_LEN];
 extern char status_prefix[MAXLEN];
 
 extern char normal_border_color[MAXLEN];
@@ -81,6 +89,11 @@ extern padding_t monocle_padding;
 extern int window_gap;
 extern unsigned int border_width;
 extern double split_ratio;
+extern double scratch_width_ratio;
+extern double scratch_height_ratio;
+extern bool scratch_autohide;
+extern unsigned int scratch_autohide_blur_delay_ms;
+extern unsigned int scratch_autohide_desktop_delay_ms;
 extern child_polarity_t initial_polarity;
 extern automatic_scheme_t automatic_scheme;
 extern bool removal_adjustment;
@@ -115,5 +128,12 @@ extern bool merge_overlapping_monitors;
 
 void run_config(int run_level);
 void load_settings(void);
+
+bool scratchpad_profile_name_valid(const char *name);
+bool scratchpad_profile_set(const char *name, const char *cmd);
+bool scratchpad_profile_normalize_arg(const char *src, char *out, size_t outsz);
+const char *scratchpad_profile_get_spawn(const char *profile_name);
+void scratchpad_profile_print(const char *name, FILE *rsp);
+void scratchpad_profile_list(FILE *rsp);
 
 #endif

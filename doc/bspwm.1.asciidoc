@@ -21,6 +21,8 @@ Synopsis
 
 *bspc* 'COMMAND' ['OPTIONS'] ['ARGUMENTS']
 
+*bspc* scratchpad toggle ['PROFILE'|last]|hide ['PROFILE']|hide_focused|close ['PROFILE']|cycle|list-profiles
+
 Description
 -----------
 
@@ -87,7 +89,7 @@ NODE_SEL := [NODE_SEL#](DIR|CYCLE_DIR|PATH|any|first_ancestor|last|newest|
 
 STATE := tiled|pseudo_tiled|floating|fullscreen
 
-FLAG := hidden|sticky|private|locked|marked|urgent
+FLAG := hidden|sticky|private|locked|scratch|marked|urgent
 
 LAYER := below|normal|above
 
@@ -196,7 +198,7 @@ Modifiers
 [!]ancestor_of::
 	Only consider nodes that are ancestors of the reference node.
 
-[!](hidden|sticky|private|locked|marked|urgent)::
+[!](hidden|sticky|private|locked|scratch|marked|urgent)::
 	Only consider windows that have the given flag set.
 
 [!](below|normal|above)::
@@ -374,6 +376,9 @@ private::
 locked::
 	Ignores the *node --close* message.
 
+scratch::
+	Scratchpad window: floating area sized by *scratch_width_ratio* and *scratch_height_ratio* relative to the tileable region (centered), not movable or resizable via pointer or *node --move* / *node --resize*. Enabling *scratch* also enables *sticky*. New windows are inserted relative to the same public tile targets as for *private* nodes (not as a split against a focused scratchpad). When the focused monitor changes, all scratchpad windows are moved to the focused desktop of that monitor. EWMH close-window requests are ignored.
+
 marked::
 	Is marked (useful for deferred actions). A marked node becomes unmarked after being sent on a preselected node.
 
@@ -463,7 +468,7 @@ Commands
 *-t*, *--state* \~|\[~]'STATE'::
 	Set the state of the selected window. If *\~* is present and the current state matches 'STATE', then the argument is interpreted as its last state. If the argument is just *~* with 'STATE' omitted, then the state of the selected window is set to its last state.
 
-*-g*, *--flag* hidden|sticky|private|locked|marked[=on|off]::
+*-g*, *--flag* hidden|sticky|private|locked|scratch|marked[=on|off]::
 	Set or toggle the given flag for the selected node.
 
 *-l*, *--layer* below|normal|above::
@@ -632,7 +637,7 @@ rule 'COMMANDS'
 Commands
 ^^^^^^^^
 
-*-a*, *--add* (<class_name>|\*)[:(<instance_name>|\*)[:(<name>|\*)]] [*-o*|*--one-shot*] [monitor=MONITOR_SEL|desktop=DESKTOP_SEL|node=NODE_SEL] [state=STATE] [layer=LAYER] [honor_size_hints=(true|false|tiled|floating)] [split_dir=DIR] [split_ratio=RATIO] [(hidden|sticky|private|locked|marked|center|follow|manage|focus|border)=(on|off)] [rectangle=WxH+X+Y]::
+*-a*, *--add* (<class_name>|\*)[:(<instance_name>|\*)[:(<name>|\*)]] [*-o*|*--one-shot*] [monitor=MONITOR_SEL|desktop=DESKTOP_SEL|node=NODE_SEL] [state=STATE] [layer=LAYER] [honor_size_hints=(true|false|tiled|floating)] [split_dir=DIR] [split_ratio=RATIO] [(hidden|sticky|private|locked|scratch|marked|center|follow|manage|focus|border)=(on|off)] [rectangle=WxH+X+Y]::
 	Create a new rule. Colons in the 'instance_name', 'class_name', or 'name'
 	fields can be escaped with a backslash.
 
@@ -667,6 +672,40 @@ Options
 
 *-c*, *--count* 'COUNT'::
 	Stop the corresponding *bspc* process after having received 'COUNT' events.
+
+Scratchpad
+~~~~~~~~~~
+
+General Syntax
+^^^^^^^^^^^^^^
+
+scratchpad 'COMMAND'
+
+Commands
+^^^^^^^^
+
+toggle ['PROFILE']::
+	Without *PROFILE*, if the focused window is a visible *scratch* node, hide it and return. Otherwise, if *scratchpad_default* is set, find a *scratch* node whose *instance_name* or *class_name* equals that name; otherwise find the first *scratch* node (any class/instance). Toggle *hidden*, and focus when showing. If none exists, run *scratchpad_spawn_command* when set.
+	With *PROFILE*, only consider *scratch* nodes whose *instance_name* or *class_name* equals *PROFILE* (exact match). If none exists, run the command from *scratchpad_profile_PROFILE* (see settings). Profile names use letters, digits, *\_* and *-*.
+	When *showing* a scratch window, every other visible scratch window is hidden first (at most one scratch visible).
+
+toggle last::
+	Same toggle behaviour as above, but always targets the most recently *shown* scratch window (updated when a scratch becomes visible after *toggle*, *cycle*, or initial map). Fails if there is no recorded scratch yet or that node no longer exists. The literal second argument *last* is reserved here and is not a profile name.
+
+hide ['PROFILE']::
+	Without *PROFILE*, hide every visible *scratch* node. With *PROFILE*, hide only *scratch* nodes matching that name (same rule as *toggle*).
+
+hide_focused::
+	If the focused window is a *scratch* node, hide it. Otherwise no-op. Useful for key bindings without affecting other scratch windows.
+
+close ['PROFILE']::
+	With *PROFILE*, send a close request (*WM_DELETE_WINDOW* or kill) to every *scratch* node whose *instance_name* or *class_name* matches *PROFILE*. Without *PROFILE*, close only the focused window if it is *scratch*; otherwise fail.
+
+cycle::
+	No-op if there are no *scratch* windows. Otherwise, among all *scratch* windows (including hidden), in stable tree order (monitors, desktops, leaves): the *current* pad is the focused window if it is scratch; else the first visible scratch in that order if any; else the cycle starts *before* the first entry (so *next* is the first scratch). Then hide every scratch window except *next* (wrapping), unhide *next* if it was hidden, and focus it. At most one scratch window remains visible.
+
+list-profiles::
+	Print each configured *scratchpad_profile_* as *NAME*=*COMMAND* (one line per profile). Profile arguments to *toggle* and *hide* are matched after trimming leading and trailing ASCII whitespace.
 
 Quit
 ~~~~
@@ -706,11 +745,33 @@ Global Settings
 'split_ratio'::
 	Default split ratio.
 
+'scratch_width_ratio'::
+'scratch_height_ratio'::
+	Fraction of the tileable layout rectangle used for *scratch* floating windows (width and height respectively). Each value must be greater than *0* and at most *1*. Defaults to *0.5*.
+
+'scratch_autohide'::
+	When *true*, hide scratchpad windows automatically: after focus moves to another window (debounced by *scratch_autohide_blur_delay_ms*), and immediately after desktop/monitor switches (debounced by *scratch_autohide_desktop_delay_ms*). Replaces an external *subscribe* autohide script. Defaults to *false*.
+
+'scratch_autohide_blur_delay_ms'::
+	Milliseconds to wait before hiding non-focused scratch windows after a *node_focus* event. Range *0*–*10000*. Defaults to *250*.
+
+'scratch_autohide_desktop_delay_ms'::
+	Milliseconds to wait before hiding all visible scratch windows after *desktop_focus*, *desktop_activate*, or *monitor_focus*. Range *0*–*10000*. Defaults to *50*.
+
 'status_prefix'::
 	Prefix prepended to each of the status lines.
 
 'external_rules_command'::
 	Absolute path to the command used to retrieve rule consequences. The command will receive the following arguments: window ID, class name, instance name, and intermediate consequences. The output of that command must have the following format: *key1=value1 key2=value2 ...* (the valid key/value pairs are given in the description of the 'rule' command).
+
+'scratchpad_spawn_command'::
+	Shell command run when *scratchpad toggle* is sent with no *PROFILE* and no matching *scratch* window exists yet. Empty by default.
+
+'scratchpad_default'::
+	If non-empty, *scratchpad toggle* with no *PROFILE* uses this profile name only when searching for a *scratch* window to toggle (after the focused-visible-scratch hide step). Spawn still uses *scratchpad_spawn_command*, not *scratchpad_profile_*. Set to the same *NAME* as your default terminal (e.g. *scratchpad*) so unprofiled toggle targets that pad instead of the first scratch in tree order. Empty by default (legacy: first scratch window of any kind).
+
+'scratchpad_profile_'*NAME*::
+	For each profile *NAME* (letters, digits, underscore, hyphen), the shell command run when *scratchpad toggle NAME* finds no matching *scratch* window. Set with *bspc config scratchpad_profile_term '...'*, read with *bspc config scratchpad_profile_term*. Set to an empty string to remove a profile. Up to 16 profiles. Use exactly one underscore between *profile_* and *NAME* (*scratchpad_profile_ffscratch*); an extra underscore (*scratchpad_profile__ffscratch*) is accepted and normalized to *NAME* without the leading underscore.
 
 'automatic_scheme'::
 	The insertion scheme used when the insertion point is in automatic mode. Accept the following values: *longest_side*, *alternate*, *spiral*.
@@ -914,7 +975,7 @@ Events
 'node_state <monitor_id> <desktop_id> <node_id> tiled|pseudo_tiled|floating|fullscreen on|off'::
 	The state of a window changed.
 
-'node_flag <monitor_id> <desktop_id> <node_id> hidden|sticky|private|locked|marked|urgent on|off'::
+'node_flag <monitor_id> <desktop_id> <node_id> hidden|sticky|private|locked|scratch|marked|urgent on|off'::
 	One of the flags of a node changed.
 
 'node_layer <monitor_id> <desktop_id> <node_id> below|normal|above'::
@@ -962,8 +1023,8 @@ Each item has the form '<type><value>' where '<type>' is the first character of 
 'T(T|P|F|=|@)'::
 	State of the focused node of a focused desktop.
 
-'G(S?P?L?M?)'::
-	Active flags of the focused node of a focused desktop.
+'G(S?P?L?R?M?)'::
+	Active flags of the focused node of a focused desktop (*S* sticky, *P* private, *L* locked, *R* scratch, *M* marked).
 
 Environment Variables
 ---------------------

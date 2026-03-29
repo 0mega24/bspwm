@@ -32,6 +32,7 @@
 #include "desktop.h"
 #include "settings.h"
 #include "subscribe.h"
+#include "autohide.h"
 #include "tree.h"
 
 subscriber_list_t *make_subscriber(FILE *stream, char *fifo_path, int field, int count)
@@ -116,7 +117,7 @@ int print_report(FILE *stream)
 					fprintf(stream, ":T@");
 				}
 				int i = 0;
-				char flags[5];
+				char flags[6];
 				if (n->sticky) {
 					flags[i++] = 'S';
 				}
@@ -125,6 +126,9 @@ int print_report(FILE *stream)
 				}
 				if (n->locked) {
 					flags[i++] = 'L';
+				}
+				if (n->scratch) {
+					flags[i++] = 'R';
 				}
 				if (n->marked) {
 					flags[i++] = 'M';
@@ -168,6 +172,7 @@ void put_status(subscriber_mask_t mask, ...)
 		}
 		sb = next;
 	}
+		autohide_on_put_status(mask);
 }
 
 void prune_dead_subscribers(void)

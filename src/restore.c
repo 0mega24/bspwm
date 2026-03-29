@@ -364,6 +364,7 @@ node_t *restore_node(jsmntok_t **t, char *json)
 			RESTORE_BOOL(sticky, &n->sticky)
 			RESTORE_BOOL(private, &n->private)
 			RESTORE_BOOL(locked, &n->locked)
+			RESTORE_BOOL(scratch, &n->scratch)
 			RESTORE_BOOL(marked, &n->marked)
 			} else if (keyeq("presel", *t, json)) {
 				(*t)++;

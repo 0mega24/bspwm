@@ -163,6 +163,14 @@ bool manage_window(xcb_window_t win, rule_consequence_t *csq, int fd)
 		n->vacant = true;
 	}
 
+	/* Scratch: anchor insertion at find_public(d), not focused leaf (e.g. bspc terminal). */
+	if (csq->scratch) {
+		node_t *pub = find_public(d);
+		if (pub != NULL) {
+			f = pub;
+		}
+	}
+
 	f = insert_node(m, d, n, f);
 	clients_count++;
 	if (single_monocle && d->layout == LAYOUT_MONOCLE && tiled_count(d->root, true) > 1) {
@@ -193,7 +201,13 @@ bool manage_window(xcb_window_t win, rule_consequence_t *csq, int fd)
 	set_sticky(m, d, n, csq->sticky);
 	set_private(m, d, n, csq->private);
 	set_locked(m, d, n, csq->locked);
+	set_scratch(m, d, n, csq->scratch);
 	set_marked(m, d, n, csq->marked);
+
+	if (n->scratch && !n->hidden) {
+		scratchpad_hide_all_except(n);
+		scratchpad_note_shown(n);
+	}
 
 	arrange(m, d);
 
@@ -519,6 +533,9 @@ bool move_client(coordinates_t *loc, int dx, int dy)
 		}
 	} else {
 		client_t *c = n->client;
+		if (n->scratch) {
+			return false;
+		}
 		xcb_rectangle_t rect = c->floating_rectangle;
 		int16_t x = rect.x + dx;
 		int16_t y = rect.y + dy;
@@ -594,6 +611,9 @@ bool resize_client(coordinates_t *loc, resize_handle_t rh, int dx, int dy, bool 
 		}
 		arrange(loc->monitor, loc->desktop);
 	} else {
+		if (n->scratch) {
+			return false;
+		}
 		int w = width, h = height;
 		if (relative) {
 			w += dx * (rh & HANDLE_LEFT ? -1 : (rh & HANDLE_RIGHT ? 1 : 0));

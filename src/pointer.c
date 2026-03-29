@@ -237,6 +237,11 @@ bool grab_pointer(pointer_action_t pac)
 		return true;
 	}
 
+	if (loc.node->scratch &&
+	    (pac == ACTION_MOVE || pac == ACTION_RESIZE_CORNER || pac == ACTION_RESIZE_SIDE)) {
+		return true;
+	}
+
 	xcb_grab_pointer_reply_t *reply = xcb_grab_pointer_reply(dpy, xcb_grab_pointer(dpy, 0, root, XCB_EVENT_MASK_BUTTON_RELEASE|XCB_EVENT_MASK_BUTTON_MOTION, XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE, XCB_NONE, XCB_CURRENT_TIME), NULL);
 
 	if (reply == NULL || reply->status != XCB_GRAB_STATUS_SUCCESS) {

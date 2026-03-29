@@ -54,6 +54,7 @@ typedef struct {
 extern xcb_connection_t *dpy;
 extern int default_screen, screen_width, screen_height;
 extern uint32_t clients_count;
+extern uint32_t scratchpad_last_id;
 extern xcb_screen_t *screen;
 extern xcb_window_t root;
 extern char config_path[MAXLEN];

@@ -242,7 +242,7 @@ _bspc() {
 		(scratchpad)
 			_arguments \
 				'1:scratchpad command:(toggle hide hide_focused close cycle list-profiles)' \
-				'2::profile name (optional; matches WM instance or class)'
+				'2::profile, or last with toggle'
 			;;
 		(subscribe)
 			if [[ "$words[CURRENT-1]" != (-c|--count) ]] ;then

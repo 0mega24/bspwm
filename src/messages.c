@@ -1415,6 +1415,19 @@ static void scratchpad_unhide_focus(coordinates_t *loc)
 	focus_node(loc->monitor, loc->desktop, loc->node);
 }
 
+static void scratchpad_apply_toggle(coordinates_t *loc)
+{
+	bool was_hidden = loc->node->hidden;
+	if (was_hidden) {
+		scratchpad_hide_all_except(loc->node);
+	}
+	set_hidden(loc->monitor, loc->desktop, loc->node, !was_hidden);
+	if (!loc->node->hidden) {
+		scratchpad_unhide_focus(loc);
+		scratchpad_note_shown(loc->node);
+	}
+}
+
 void cmd_scratchpad(char **args, int num, FILE *rsp)
 {
 	if (num < 1) {
@@ -1427,6 +1440,20 @@ void cmd_scratchpad(char **args, int num, FILE *rsp)
 		return;
 	} else if (streq("toggle", args[0])) {
 		coordinates_t loc;
+		if (num >= 2 && streq("last", args[1])) {
+			if (scratchpad_last_id == 0) {
+				fail(rsp, "scratchpad toggle last: no recent scratch window.\n");
+				return;
+			}
+			if (!find_by_id(scratchpad_last_id, &loc) || loc.node == NULL ||
+			    loc.node->client == NULL || !loc.node->scratch) {
+				scratchpad_last_id = 0;
+				fail(rsp, "scratchpad toggle last: last scratch no longer exists.\n");
+				return;
+			}
+			scratchpad_apply_toggle(&loc);
+			return;
+		}
 		char profbuf[SCRATCHPAD_PROFILE_NAME_LEN];
 		const char *profile = NULL;
 		if (num >= 2 && args[1][0] != '\0' &&
@@ -1450,14 +1477,7 @@ void cmd_scratchpad(char **args, int num, FILE *rsp)
 		}
 
 		if (find_scratch_for_profile(&loc, find_profile)) {
-			bool was_hidden = loc.node->hidden;
-			if (was_hidden) {
-				scratchpad_hide_all_except(loc.node);
-			}
-			set_hidden(loc.monitor, loc.desktop, loc.node, !was_hidden);
-			if (!loc.node->hidden) {
-				scratchpad_unhide_focus(&loc);
-			}
+			scratchpad_apply_toggle(&loc);
 			return;
 		}
 
@@ -1598,6 +1618,7 @@ scratch_cycle_done:
 			set_hidden(refs[next].monitor, refs[next].desktop, refs[next].node, false);
 		}
 		scratchpad_unhide_focus(&refs[next]);
+		scratchpad_note_shown(refs[next].node);
 		return;
 	} else {
 		fail(rsp, "scratchpad: Unknown command: '%s'.\n", args[0]);

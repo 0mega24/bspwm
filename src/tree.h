@@ -42,6 +42,8 @@ bool find_first_scratch(coordinates_t *loc);
 bool find_scratch_for_profile(coordinates_t *loc, const char *profile);
 bool node_scratch_matches_profile(node_t *n, const char *profile);
 void scratchpad_hide_all_except(node_t *except);
+void scratchpad_note_shown(node_t *n);
+void scratchpad_clear_last_if(node_t *n);
 node_t *insert_node(monitor_t *m, desktop_t *d, node_t *n, node_t *f);
 void insert_receptacle(monitor_t *m, desktop_t *d, node_t *n);
 bool activate_node(monitor_t *m, desktop_t *d, node_t *n);

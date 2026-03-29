@@ -206,6 +206,7 @@ bool manage_window(xcb_window_t win, rule_consequence_t *csq, int fd)
 
 	if (n->scratch && !n->hidden) {
 		scratchpad_hide_all_except(n);
+		scratchpad_note_shown(n);
 	}
 
 	arrange(m, d);

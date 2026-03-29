@@ -21,7 +21,7 @@ Synopsis
 
 *bspc* 'COMMAND' ['OPTIONS'] ['ARGUMENTS']
 
-*bspc* scratchpad toggle ['PROFILE']|hide ['PROFILE']|hide_focused|close ['PROFILE']|cycle|list-profiles
+*bspc* scratchpad toggle ['PROFILE'|last]|hide ['PROFILE']|hide_focused|close ['PROFILE']|cycle|list-profiles
 
 Description
 -----------
@@ -688,6 +688,9 @@ toggle ['PROFILE']::
 	Without *PROFILE*, if the focused window is a visible *scratch* node, hide it and return. Otherwise, if *scratchpad_default* is set, find a *scratch* node whose *instance_name* or *class_name* equals that name; otherwise find the first *scratch* node (any class/instance). Toggle *hidden*, and focus when showing. If none exists, run *scratchpad_spawn_command* when set.
 	With *PROFILE*, only consider *scratch* nodes whose *instance_name* or *class_name* equals *PROFILE* (exact match). If none exists, run the command from *scratchpad_profile_PROFILE* (see settings). Profile names use letters, digits, *\_* and *-*.
 	When *showing* a scratch window, every other visible scratch window is hidden first (at most one scratch visible).
+
+toggle last::
+	Same toggle behaviour as above, but always targets the most recently *shown* scratch window (updated when a scratch becomes visible after *toggle*, *cycle*, or initial map). Fails if there is no recorded scratch yet or that node no longer exists. The literal second argument *last* is reserved here and is not a profile name.
 
 hide ['PROFILE']::
 	Without *PROFILE*, hide every visible *scratch* node. With *PROFILE*, hide only *scratch* nodes matching that name (same rule as *toggle*).

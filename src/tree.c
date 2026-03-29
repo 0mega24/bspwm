@@ -368,6 +368,20 @@ void scratchpad_hide_all_except(node_t *except)
 	}
 }
 
+void scratchpad_note_shown(node_t *n)
+{
+	if (n != NULL && n->client != NULL && n->scratch) {
+		scratchpad_last_id = n->id;
+	}
+}
+
+void scratchpad_clear_last_if(node_t *n)
+{
+	if (n != NULL && n->scratch && scratchpad_last_id == n->id) {
+		scratchpad_last_id = 0;
+	}
+}
+
 node_t *insert_node(monitor_t *m, desktop_t *d, node_t *n, node_t *f)
 {
 	if (d == NULL || n == NULL) {
@@ -1559,6 +1573,7 @@ void free_node(node_t *n)
 	if (n == NULL) {
 		return;
 	}
+	scratchpad_clear_last_if(n);
 	node_t *first_child = n->first_child;
 	node_t *second_child = n->second_child;
 	free(n->client);
